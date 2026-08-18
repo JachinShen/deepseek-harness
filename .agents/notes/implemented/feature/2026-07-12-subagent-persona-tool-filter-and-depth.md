@@ -12,7 +12,7 @@ These controls affect the child's first model request and therefore cannot be in
 
 ## Decision
 
-Subagent starts have three independent composition controls: `persona`, `toolFilter`, and `maxDepth`. A provider advertises support for each control, the service rejects unsupported requests before starting a run, and an in-process provider installs the requested composition while the child is still unpublished.
+Subagent starts have four independent composition controls: `persona`, `toolFilter`, `maxDepth`, and `agentPreset`. A provider advertises support for each control, the service rejects unsupported requests before starting a run, and an in-process provider installs the requested composition while the child is still unpublished. `agentPreset` is available to fresh spawn only; fork deliberately rejects it and continues to inherit the parent's composition.
 
 The controls answer different questions:
 
@@ -21,8 +21,9 @@ The controls answer different questions:
 | `persona` | What role instructions replace the deployment persona for this child? | A child-local prompt section shadows `deployment:persona` |
 | `toolFilter` | Which deployment-global tools enter this child's visible tool view? | A scoped restriction filters globals before child-local tools are added |
 | `maxDepth` | How deep may this delegation tree grow? | A start whose child depth exceeds the absolute cap is rejected |
+| `agentPreset` | Which named agent composition should a fresh child use? | The child mounts the requested roster preset; omission inherits, and fork rejects selection |
 
-`dsh-tool-subagent` exposes the controls as plugin configuration and copies them into each request it creates. Direct `SubagentRuntime` callers may choose them per request. The provider capability descriptor remains the source of truth for whether a backend can honor each field.
+`dsh-tool-subagent` exposes the controls as plugin configuration and copies them into each request it creates. The standard spawn tool additionally exposes a model-facing `profile` argument: omission inherits the parent preset and a roster id such as `minimal-70` selects a fresh composition. The fork tool does not expose that argument. Direct `SubagentRuntime` callers may choose supported controls per request. The provider capability descriptor remains the source of truth for whether a backend can honor each field.
 
 ### Persona is a scoped shadow
 
@@ -59,13 +60,13 @@ A deployment can combine depth and filtering, but the numeric cap does not synth
 
 ### Capability gating keeps providers honest
 
-Capabilities separate a requested feature from a provider implementation. `SubagentCapabilities` advertises `persona`, `toolFilter`, and `depthLimit`; `SubagentRuntime.start()` checks every present request field against those flags before calling the provider.
+Capabilities separate a requested feature from a provider implementation. `SubagentCapabilities` advertises `persona`, `toolFilter`, `depthLimit`, and `agentPreset`; `SubagentRuntime.start()` and `startContinuable()` check every present request field against those flags before calling the provider. The in-process spawn provider advertises `agentPreset`; fork and out-of-process providers do not.
 
 This lets spawn and fork providers share the in-process implementation while external providers advertise only what they can enforce. A request never degrades silently: selecting an unsupported control produces `UNSUPPORTED_CAPABILITY`, and no run or lifecycle event exists.
 
 ### Unpublished setup makes the first request correct
 
-All child-local composition is complete before the child becomes observable. The in-process provider supplies one setup callback to agent creation; that callback installs persona, tool restriction, and structured-output contributions in the child's scope. Only after setup succeeds does creation publish the session and agent and allow the driver to start.
+All child-local composition is complete before the child becomes observable. The in-process provider supplies one setup callback to agent creation; that callback mounts a selected preset or joins the parent, then installs persona, tool restriction, and structured-output contributions in the child's scope. Only after setup succeeds does creation publish the session and agent and allow the driver to start. Continuable descriptors persist the selected preset so cold resume rebuilds the same composition.
 
 A setup failure rolls back the private child. No observer can acquire a child whose first prompt used the deployment persona or unfiltered tool set and whose later prompts use the requested configuration.
 
@@ -91,6 +92,6 @@ A security design would need a separate authority representation, propagation ru
 
 ## Consequences
 
-Contributors can configure child role, visible global tools, and recursion without defining new providers. Capability checks fail before ownership starts, unpublished setup makes the first request consistent, and one tool resolver prevents presentation/execution drift.
+Contributors can configure child role, visible global tools, recursion, and fresh-child profile without defining new providers. Capability checks fail before ownership starts, unpublished setup makes the first request consistent, selected continuable profiles survive cold resume, and one tool resolver prevents presentation/execution drift.
 
 The cost is that deployments must understand live allow/deny behavior and the distinction between visibility and authority. A model may call a visible delegation tool after the current depth policy forbids another child and receive an error. Provider authors must advertise each supported control accurately, and in-process providers must install every requested contribution before publication. The controls deliberately do not solve security confinement or parent-to-child non-escalation.

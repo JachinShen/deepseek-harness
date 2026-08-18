@@ -44,7 +44,7 @@ declare module '@deepseek-ai/dsh-session/types' {
  * Supporting another composition input is a deliberate version change, never
  * an implicit extra field.
  */
-export const SUBAGENT_DESCRIPTOR_VERSION = 2
+export const SUBAGENT_DESCRIPTOR_VERSION = 3
 
 /** Fields shared by every supported `subagent/descriptor` payload. */
 interface SubagentDescriptorBase {
@@ -80,6 +80,8 @@ export interface ContinuableSubagentDescriptorData extends SubagentDescriptorBas
   readonly persona?: string
   /** Child tool scoping reapplied on resume. */
   readonly toolFilter?: ToolRestriction
+  /** Named agent preset reapplied on cold resume. */
+  readonly agentPreset?: string
 }
 
 /** The supported durable subagent identity and optional continuation composition. */
@@ -115,6 +117,8 @@ export interface ContinuableSubagentDescriptorInput extends SubagentDescriptorIn
   readonly persona?: string
   /** Requested child tool scoping. */
   readonly toolFilter?: ToolRestriction
+  /** Requested named agent preset. */
+  readonly agentPreset?: string
 }
 
 /** Inputs {@link snapshotSubagentDescriptor} validates and detaches. */
@@ -135,6 +139,7 @@ const CONTINUABLE_DESCRIPTOR_KEYS = new Set([
   'agentModel',
   'persona',
   'toolFilter',
+  'agentPreset',
 ])
 const TOOL_FILTER_KEYS = new Set(['allow', 'deny'])
 
@@ -235,6 +240,7 @@ function parseSubagentDescriptor(value: unknown): SubagentDescriptorData | undef
   const toolFilter = Object.hasOwn(value, 'toolFilter')
     ? parseToolFilter(value['toolFilter'])
     : undefined
+  const agentPreset = optionalString(value, 'agentPreset')
   return {
     version: SUBAGENT_DESCRIPTOR_VERSION,
     mode,
@@ -244,6 +250,7 @@ function parseSubagentDescriptor(value: unknown): SubagentDescriptorData | undef
     ...agentModel !== undefined ? { agentModel } : {},
     ...persona !== undefined ? { persona } : {},
     ...toolFilter !== undefined ? { toolFilter } : {},
+    ...agentPreset !== undefined ? { agentPreset } : {},
   }
 }
 
@@ -285,6 +292,7 @@ export function snapshotSubagentDescriptor(input: SubagentDescriptorInput): Suba
       ...input.agentModel !== undefined ? { agentModel: input.agentModel } : {},
       ...input.persona !== undefined ? { persona: input.persona } : {},
       ...input.toolFilter !== undefined ? { toolFilter: input.toolFilter } : {},
+      ...input.agentPreset !== undefined ? { agentPreset: input.agentPreset } : {},
     }
   const snapshot = snapshotJsonValue(candidate)
   if (snapshot === undefined) {

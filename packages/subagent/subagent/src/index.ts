@@ -210,7 +210,10 @@ export class SubagentRuntime extends Service {
    * @throws when continuation services are unavailable or materialization fails.
    */
   async startContinuable(spec: ContinuableStartSpec): Promise<ContinuableStart> {
-    return this.requireContinuations().startContinuable(spec)
+    const continuations = this.requireContinuations()
+    const provider = this.expectProvider(spec.provider)
+    this.assertCapabilities(provider, spec.request)
+    return continuations.startContinuable(spec)
   }
 
   /**
@@ -478,12 +481,16 @@ export class SubagentRuntime extends Service {
   }
 
   /** Reject the first requested capability that the provider lacks. */
-  private assertCapabilities(provider: SubagentProvider, request: SubagentStartRequest): void {
+  private assertCapabilities(
+    provider: SubagentProvider,
+    request: Pick<SubagentStartRequest, 'outputSchema' | 'maxDepth' | 'toolFilter' | 'persona' | 'agentPreset'>,
+  ): void {
     const needs: { when: boolean; cap: keyof SubagentCapabilities }[] = [
       { when: request.outputSchema !== undefined, cap: 'outputSchema' },
       { when: request.maxDepth !== undefined, cap: 'depthLimit' },
       { when: request.toolFilter !== undefined, cap: 'toolFilter' },
       { when: request.persona !== undefined, cap: 'persona' },
+      { when: request.agentPreset !== undefined, cap: 'agentPreset' },
     ]
     for (const { when, cap } of needs) {
       if (when && !provider.capabilities[cap]) {

@@ -12,7 +12,7 @@ Status: implemented
 
 ## 决策
 
-subagent 启动有三个独立的组合控制：`persona`、`toolFilter` 和 `maxDepth`。提供方声明对每个控制的支持情况，服务在启动运行之前拒绝不受支持的请求，进程内提供方在子 agent 尚未发布时安装所请求的组合。
+subagent 启动有四个独立的组合控制：`persona`、`toolFilter`、`maxDepth` 和 `agentPreset`。提供方声明对每个控制的支持情况，服务在启动运行之前拒绝不受支持的请求，进程内提供方在子 agent 尚未发布时安装所请求的组合。`agentPreset` 仅支持新建 spawn；fork 会明确拒绝它并继续继承父级组合。
 
 这些控制回答不同的问题：
 
@@ -21,8 +21,9 @@ subagent 启动有三个独立的组合控制：`persona`、`toolFilter` 和 `ma
 | `persona` | 什么角色指令替换该子 agent 的部署人设？ | 一个子 agent 局部的提示词段落遮蔽 `deployment:persona` |
 | `toolFilter` | 部署全局工具中哪些进入该子 agent 的可见工具视图？ | 一个有作用域的限制在添加子 agent 局部工具之前过滤全局工具 |
 | `maxDepth` | 这棵委派树最深可以长到多少层？ | 子 agent 深度超过绝对上限时，启动请求被拒绝 |
+| `agentPreset` | 新建子 agent 应使用哪个命名组合？ | 挂载请求的 roster preset；省略时继承，fork 拒绝选择 |
 
-`dsh-tool-subagent` 将这些控制作为插件配置暴露，并复制到它创建的每个请求中。直接调用 `SubagentRuntime` 的调用方可以按请求选择这些控制。提供方的能力描述符仍然是后端能否兑现各字段的真源。
+`dsh-tool-subagent` 将这些控制作为插件配置暴露，并复制到它创建的每个请求中。标准 spawn 工具还会向模型公开 `profile` 参数：省略时继承父级 preset，传入 `minimal-70` 等 roster ID 时为新建子 agent 选择组合。fork 工具不公开该参数。直接调用 `SubagentRuntime` 的调用方可以按请求选择受支持的控制。提供方的能力描述符仍然是后端能否兑现各字段的真源。
 
 ### 人设是有作用域的遮蔽
 
@@ -59,13 +60,13 @@ subagent 启动有三个独立的组合控制：`persona`、`toolFilter` 和 `ma
 
 ### 能力门控保持提供方诚实
 
-能力将请求的功能与提供方实现分离。`SubagentCapabilities` 声明 `persona`、`toolFilter` 和 `depthLimit`；`SubagentRuntime.start()` 在调用提供方之前，对照这些标志检查请求中每个存在的字段。
+能力将请求的功能与提供方实现分离。`SubagentCapabilities` 声明 `persona`、`toolFilter`、`depthLimit` 和 `agentPreset`；`SubagentRuntime.start()` 与 `startContinuable()` 在调用提供方之前，对照这些标志检查请求中每个存在的字段。进程内 spawn 提供方声明支持 `agentPreset`；fork 与进程外提供方不支持。
 
 这使 spawn 和 fork 提供方可以共享进程内实现，而外部提供方只声明自己能强制执行的部分。请求永远不会静默降级：选择不受支持的控制会产生 `UNSUPPORTED_CAPABILITY`，不会有运行或生命周期事件存在。
 
 ### 未发布设置使第一次请求正确
 
-所有子 agent 局部的组合在子 agent 变得可观察之前完成。进程内提供方向 agent 创建提供一个设置回调；该回调在子 agent 作用域中安装人设、工具限制和结构化输出贡献。只有设置成功后，创建才发布会话和 agent 并允许驱动器启动。
+所有子 agent 局部的组合在子 agent 变得可观察之前完成。进程内提供方向 agent 创建提供一个设置回调；该回调先挂载选择的 preset 或加入父级，再在子 agent 作用域中安装人设、工具限制和结构化输出贡献。只有设置成功后，创建才发布会话和 agent 并允许驱动器启动。可继续描述符会持久化选择的 preset，使冷恢复重建同一份组合。
 
 设置失败会回滚私有子 agent。没有观察者能获取到一个「第一次提示词使用了部署人设或未过滤工具集、后续提示词才使用所请求配置」的子 agent。
 
@@ -91,6 +92,6 @@ subagent 启动有三个独立的组合控制：`persona`、`toolFilter` 和 `ma
 
 ## 后果
 
-贡献者可以配置子 agent 的角色、可见全局工具和递归深度，而无需定义新的提供方。能力检查在所有权开始之前失败，未发布设置使第一次请求一致，单一工具解析器防止呈现/执行漂移。
+贡献者可以配置子 agent 的角色、可见全局工具、递归深度和新建子 agent 的 preset，而无需定义新的提供方。能力检查在所有权开始之前失败，未发布设置使第一次请求一致，选定的可继续 preset 能在冷恢复后保持，单一工具解析器防止呈现/执行漂移。
 
 代价是部署方必须理解活跃的 allow/deny 行为以及可见性与授权的区别。当前深度策略禁止再创建子 agent 后，模型仍可能调用可见的委派工具并收到错误。提供方作者必须准确声明每个受支持的控制，进程内提供方必须在发布前安装所有请求的贡献。这些控制有意不解决安全隔离或父到子的非升权问题。

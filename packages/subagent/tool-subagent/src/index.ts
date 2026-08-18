@@ -67,6 +67,12 @@ export interface Config {
     deny?: string[]
   }
   /**
+   * Expose the model-facing `profile` parameter for this tool instance. When
+   * enabled, omission inherits the parent profile; a value names a preset to
+   * mount for a fresh child. Fork tools must leave this disabled.
+   */
+  allowAgentPreset?: boolean
+  /**
    * Maximum child depth: a non-negative safe integer (default `3`; `0` forbids
    * delegation entirely), or `'provider-managed'` to send no cap. A numeric cap
    * requires the provider's `depthLimit` capability (mount fails loud
@@ -95,6 +101,7 @@ export const Config: z<Config> = z.object({
     allow: z.array(z.string()).default(undefined as unknown as string[]),
     deny: z.array(z.string()).default(undefined as unknown as string[]),
   }).default(undefined as unknown as { allow: string[]; deny: string[] }),
+  allowAgentPreset: z.boolean().default(false),
   maxDepth: z.union([z.natural().max(Number.MAX_SAFE_INTEGER), z.const('provider-managed' as const)]).default(3),
 })
 
@@ -239,6 +246,7 @@ function providerWording(inheritsConversation: boolean): { description: string; 
 
 interface DelegationRunRequest {
   readonly run_in_background?: boolean
+  readonly profile?: string
 }
 
 interface DelegationRunSpec {
@@ -296,6 +304,11 @@ export function apply(ctx: Context, config: Config): void {
         `tool-subagent: provider "${provider.name}" does not support \`backgroundMode: continuable\``,
       )
     }
+    if (config.allowAgentPreset && !provider.capabilities.agentPreset) {
+      throw new Error(
+        `tool-subagent: provider "${provider.name}" does not support profile selection (no agentPreset capability)`,
+      )
+    }
     disposeTool = ctx.tools.register(defineTool({
       name: toolName,
       description: wording.description + (backgroundEnabled
@@ -323,6 +336,12 @@ export function apply(ctx: Context, config: Config): void {
             description: continuable
               ? 'Whether to run in the background and return a durable subagent id immediately. Defaults to true. Set false to wait for the result when your next action depends on it.'
               : 'Whether to run as a background job and return its id. Defaults to false; collect with job_output or stop with job_kill.',
+          },
+        } : {},
+        ...config.allowAgentPreset ? {
+          profile: {
+            type: 'string' as const,
+            description: 'Optional agent preset id for the child. Omit to inherit the parent profile; use a roster id such as `minimal` for a fresh spawn profile.',
           },
         } : {},
       },
@@ -376,6 +395,9 @@ export function apply(ctx: Context, config: Config): void {
         }
 
         const maxDepth = typeof config.maxDepth === 'number' ? config.maxDepth : undefined
+        if (args.profile !== undefined && !config.allowAgentPreset) {
+          throw new Error('profile selection is disabled for this subagent tool; fork children always inherit the parent profile')
+        }
         const request = {
           label: args.description,
           prompt: [{ type: 'text', text: args.prompt }] as ContentBlock[],
@@ -383,6 +405,7 @@ export function apply(ctx: Context, config: Config): void {
           ...config.agentOptions !== undefined ? { agentOptions: config.agentOptions } : {},
           ...config.persona !== undefined ? { persona: config.persona } : {},
           ...config.toolFilter !== undefined ? { toolFilter: config.toolFilter } : {},
+          ...args.profile !== undefined ? { agentPreset: args.profile } : {},
           ...maxDepth !== undefined ? { maxDepth } : {},
         }
 

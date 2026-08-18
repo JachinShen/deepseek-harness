@@ -282,10 +282,29 @@ describe('dsh-subagent-spawn-in-process', () => {
     await parentHandle.dispose()
   })
 
-  it('advertises every start-time capability (depthLimit, outputSchema, toolFilter, persona)', async () => {
+  it('mounts a selected agent preset and records it on the child header', async () => {
+    const { ctx, parent } = await setup([textResponse('child')])
+    let selected: string | undefined
+    ctx.provide('agentPresets', {
+      mount: async (_childCtx: Context, id: string) => { selected = id },
+      composeFrom: () => 'parent-profile',
+      composedPreset: () => 'parent-profile',
+    } as never)
+    const run = await start(ctx, 'spawn', {
+      prompt: [{ type: 'text', text: 'work' }],
+      parent,
+      agentPreset: 'minimal',
+    })
+    expect(selected).toBe('minimal')
+    expect(ctx.agents.get(run.id)?.session.header.agentPreset).toBe('minimal')
+    await run.result
+    await run.dispose()
+  })
+
+  it('advertises every start-time capability (depthLimit, outputSchema, toolFilter, persona, agentPreset)', async () => {
     const { ctx } = await setup([])
     const provider = ctx.subagents.getProvider('spawn')!
-    expect(provider.capabilities).toEqual({ outputSchema: true, depthLimit: true, toolFilter: true, persona: true })
+    expect(provider.capabilities).toEqual({ outputSchema: true, depthLimit: true, toolFilter: true, persona: true, agentPreset: true })
   })
 
   it('unregisters the provider when its fiber is disposed (HMR safety)', async () => {

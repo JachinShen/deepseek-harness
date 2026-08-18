@@ -103,9 +103,9 @@ export function childSessionMeta(
   parent: Agent,
   childDepth: number,
   lineageSeedLength: number,
+  agentPreset = parent.ctx.get('agentPresets')?.composedPreset(parent.ctx),
 ): NonNullable<CreateAgentOptions['meta']> {
   const parentHeader = parent.session.header
-  const agentPreset = parent.ctx.get('agentPresets')?.composedPreset(parent.ctx)
   return {
     ...parentHeader.cwd !== undefined ? { cwd: parentHeader.cwd } : {},
     ...agentPreset === undefined ? {} : { agentPreset },
@@ -125,6 +125,8 @@ export interface ChildComposition {
   readonly persona?: string | undefined
   /** Per-child tool scoping. */
   readonly toolFilter?: ToolRestriction | undefined
+  /** Named agent preset, or undefined to inherit the parent's composition. */
+  readonly agentPreset?: string | undefined
 }
 
 /**
@@ -158,14 +160,22 @@ export const SUBAGENT_DELEGATION_CONTEXT
  * unrepresentable at the call sites.
  * @param childCtx - the child agent's scoped creation context.
  * @param parent - the delegating parent whose composition the child joins.
- * @param composition - the per-child persona and tool filter to install.
+ * @param composition - the optional named preset, persona, and tool filter to install.
  */
-export function applyChildComposition(
+export async function applyChildComposition(
   childCtx: Context,
   parent: Agent,
   composition: ChildComposition,
-): void {
-  childCtx.get('agentPresets')?.composeFrom(childCtx, parent.ctx)
+): Promise<void> {
+  const agentPresets = childCtx.get('agentPresets')
+  if (composition.agentPreset !== undefined) {
+    if (agentPresets === undefined) {
+      throw new Error(`agent preset "${composition.agentPreset}" requested but the agent-presets service is unavailable`)
+    }
+    await agentPresets.mount(childCtx, composition.agentPreset)
+  } else {
+    agentPresets?.composeFrom(childCtx, parent.ctx)
+  }
   // Order 120: after the sandbox:policy (110) and approval:policy (115) sentences.
   childCtx.systemPrompt.context({ name: 'subagent:delegation', order: 120, text: SUBAGENT_DELEGATION_CONTEXT })
   if (composition.persona !== undefined) {

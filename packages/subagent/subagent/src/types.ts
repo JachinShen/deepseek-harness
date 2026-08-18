@@ -88,6 +88,11 @@ export interface SubagentCapabilities {
   readonly depthLimit: boolean
   readonly toolFilter: boolean
   readonly persona: boolean
+  /**
+   * Whether the provider can compose the child from a named agent preset.
+   * Requires the provider to create the child in the same harness process.
+   */
+  readonly agentPreset?: boolean
 }
 
 /**
@@ -146,6 +151,12 @@ export interface SubagentStartRequest {
    * persona (strict `{{…}}` interpolation against the registered variables).
    */
   readonly persona?: string
+  /**
+   * Optional named agent preset for this child. Omission preserves the
+   * provider's existing composition rule, which is parent inheritance for
+   * in-process children.
+   */
+  readonly agentPreset?: string
 }
 
 /**
