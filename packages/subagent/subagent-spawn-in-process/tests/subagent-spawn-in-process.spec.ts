@@ -10,7 +10,7 @@ import InvariantRegistry from '@deepseek-ai/dsh-invariants'
 import * as SessionInvariant from '@deepseek-ai/dsh-session/invariant'
 import * as AgentInvariant from '@deepseek-ai/dsh-agent/invariant'
 import * as AgentLoopInvariant from '@deepseek-ai/dsh-agent-loop/invariant'
-import SubagentRuntime, { type SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
+import SubagentRuntime, { resolveChildAgentOptions, type SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
 import { MockAdapter, maxTokensResponse, textResponse, toolCallResponse } from '../../../core/agent-loop/tests/mock-adapter.ts'
 import * as spawn from '../src/index.ts'
 import { STRUCTURED_OUTPUT_TOOL } from '@deepseek-ai/dsh-subagent-in-process-driver'
@@ -73,6 +73,16 @@ describe('dsh-subagent-spawn-in-process', () => {
     expect(result.stopReason).toBe('completed')
     expect(text(result.output)).toBe('child answer')
     await run.dispose()
+  })
+
+  it('inherits the latest session model route after the parent changes model', () => {
+    const parent = {
+      options: { provider: 'mock', model: 'initial-model', maxTokens: 100 },
+      session: { requestHeader: () => ({ config: { provider: 'mock', model: 'selected-model', maxTokens: 200 } }) },
+    } as unknown as Agent
+    expect(resolveChildAgentOptions(parent, undefined, 1)).toMatchObject({
+      provider: 'mock', model: 'selected-model', maxTokens: 200, subagentDepth: 1,
+    })
   })
 
   it('emits subagent/start only after the fresh child is published', async () => {

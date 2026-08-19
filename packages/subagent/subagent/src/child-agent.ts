@@ -70,9 +70,13 @@ export function resolveChildAgentOptions(
   requested: AgentOptions | undefined,
   childDepth: number,
 ): AgentOptions {
-  const parentProvider = parent.options.provider
-  const parentModel = parent.options.model
-  const parentMaxTokens = parent.options.maxTokens
+  // Web sessions can change their model after Agent creation. The latest
+  // request header is the live effective route; creation options are the
+  // fallback for headless or otherwise header-less agents.
+  const current = parent.session.requestHeader()?.config
+  const parentProvider = current?.provider ?? parent.options.provider
+  const parentModel = current?.model ?? parent.options.model
+  const parentMaxTokens = current?.maxTokens ?? parent.options.maxTokens
   return {
     ...parentProvider !== undefined ? { provider: parentProvider } : {},
     ...parentModel !== undefined ? { model: parentModel } : {},
