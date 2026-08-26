@@ -3,6 +3,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import { resolveSessionPreset } from '@deepseek-ai/dsh-agent-presets'
 import { TeamTaskId } from '@deepseek-ai/dsh-experimental-agent-team'
 import type { TeamMemberView } from '@deepseek-ai/dsh-experimental-agent-team'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -19,12 +20,21 @@ export interface Config {
   readonly freshProvider?: string
   /** Continuable-subagent provider used for completed-prefix fork teammates. */
   readonly forkProvider?: string
+  /** Optional Agent preset id whose members receive Team tools. */
+  readonly agentPreset?: string
+  /** Global tool names hidden from every matched Team member. */
+  readonly denyTools?: string[]
+  /** Additional global tool names hidden only from the Team Lead. */
+  readonly denyLeadTools?: string[]
 }
 
 /** Loader schema for the opt-in Team tool plugin. */
 export const Config: z<Config> = z.object({
   freshProvider: z.string().default('spawn'),
   forkProvider: z.string().default('fork'),
+  agentPreset: z.string(),
+  denyTools: z.array(z.string()).default([]),
+  denyLeadTools: z.array(z.string()).default([]),
 })
 
 /** Model-facing collaboration guidance shared by Lead and teammates. */
@@ -156,11 +166,20 @@ function callingAgent(agent: Agent | undefined, toolName: string): Agent {
 }
 
 /** Register the complete Team tool set in one exact Agent scope. */
-function install(agent: Agent, ctx: Context, config: Required<Config>): () => void {
+function install(
+  agent: Agent,
+  ctx: Context,
+  config: Required<Pick<Config, 'freshProvider' | 'forkProvider' | 'denyTools' | 'denyLeadTools'>>,
+): () => void {
   const scoped = agent.ctx
   const disposers: Array<() => unknown> = []
   const register = (disposer: () => unknown): void => { disposers.push(disposer) }
   try {
+    const membership = ctx.agentTeams.membership(agent)
+    const denied = membership.role === 'lead'
+      ? [...config.denyTools, ...config.denyLeadTools]
+      : config.denyTools
+    if (denied.length > 0) register(scoped.tools.restrict({ deny: [...new Set(denied)] }))
     register(scoped.systemPrompt.section({
       name: 'team:policy',
       order: 60,
@@ -396,17 +415,32 @@ function install(agent: Agent, ctx: Context, config: Required<Config>): () => vo
 
 /** Install Team tools in every live or subsequently published Team member scope. */
 export function apply(ctx: Context, config: Config = {}): void {
-  const resolved: Required<Config> = {
+  const resolved = {
     freshProvider: config.freshProvider ?? 'spawn',
     forkProvider: config.forkProvider ?? 'fork',
+    denyTools: config.denyTools ?? [],
+    denyLeadTools: config.denyLeadTools ?? [],
   }
   const installed = new Map<Agent, () => void>()
-  const maybeInstall = (agent: Agent): void => {
-    if (installed.has(agent) || ctx.agentTeams.tryMembership(agent) === undefined) return
-    installed.set(agent, install(agent, ctx, resolved))
+  const reconcile = (agent: Agent): void => {
+    const matchesPreset = config.agentPreset === undefined
+      || resolveSessionPreset(agent.session) === config.agentPreset
+    const membership = ctx.agentTeams.tryMembership(agent)
+    if (!matchesPreset || membership === undefined) {
+      installed.get(agent)?.()
+      installed.delete(agent)
+      return
+    }
+    if (!installed.has(agent)) installed.set(agent, install(agent, ctx, resolved))
   }
-  for (const agent of ctx.agents.list()) maybeInstall(agent)
-  ctx.on('agent/created', ({ agent }) => { maybeInstall(agent) })
+  for (const agent of ctx.agents.list()) reconcile(agent)
+  ctx.on('agent/created', ({ agent }) => { reconcile(agent) })
+  ctx.on('agent/status', ({ agent }) => { reconcile(agent) })
+  ctx.on('session/event', (session, event) => {
+    if (event.type !== 'agent-preset/selected') return
+    const agent = ctx.agents.get(session.id)
+    if (agent !== undefined) reconcile(agent)
+  })
   ctx.on('agent/disposed', ({ agent }) => {
     installed.get(agent)?.()
     installed.delete(agent)

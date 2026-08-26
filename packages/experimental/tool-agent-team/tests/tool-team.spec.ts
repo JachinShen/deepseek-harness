@@ -41,7 +41,11 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
-async function setup(script: ConstructorParameters<typeof MockAdapter>[0], legacyControl = false) {
+async function setup(
+  script: ConstructorParameters<typeof MockAdapter>[0],
+  legacyControl = false,
+  toolConfig: toolTeam.Config = {},
+) {
   const ctx = new Context()
   await mountAgentLoopTestDependencies(ctx)
   const storageRoot = mkdtempSync(join(tmpdir(), 'dsh-tool-team-'))
@@ -53,7 +57,15 @@ async function setup(script: ConstructorParameters<typeof MockAdapter>[0], legac
   await ctx.plugin(SubagentSpawn, { providerName: 'spawn' })
   await ctx.plugin(SubagentFork, { providerName: 'fork' })
   await ctx.plugin(TeamService)
-  const fiber = await ctx.plugin(toolTeam)
+  for (const name of new Set([...(toolConfig.denyTools ?? []), ...(toolConfig.denyLeadTools ?? [])])) {
+    ctx.tools.register(defineContentToolFixture({
+      name,
+      description: `fixture ${name}`,
+      parameters: {},
+      async execute() { return [{ type: 'text', text: name }] },
+    }))
+  }
+  const fiber = await ctx.plugin(toolTeam, toolConfig)
   const adapter = new MockAdapter(script)
   ctx.llm.registerAdapter(['mock'], adapter)
   const lead = ctx.agentLoop.create(SessionId('tool-team-lead'), { provider: 'mock', model: 'mock' })
@@ -144,6 +156,36 @@ describe('dsh-tool-team', () => {
     expect(text(denied)).toContain('only the Team Lead')
     await execute(ctx, lead, 'interrupt_agent', { target: 'tool-worker' })
     await vi.waitFor(() => { expect(ctx.agents.get(childId)).toBeUndefined() }, { timeout: 5_000 })
+  })
+
+  it('follows the effective preset selected after blank-session creation', async () => {
+    const { ctx, lead } = await setup([], false, { agentPreset: 'teams' })
+    expect((await assembly(ctx, lead)).tools.map(schema => schema.name)).not.toContain('followup_task')
+
+    lead.session.append('agent-preset/selected', { agentPreset: 'teams' })
+    expect((await assembly(ctx, lead)).tools.map(schema => schema.name)).toContain('followup_task')
+
+    lead.session.append('agent-preset/selected', { agentPreset: 'cordis' })
+    expect((await assembly(ctx, lead)).tools.map(schema => schema.name)).not.toContain('followup_task')
+  })
+
+  it('hides ordinary delegation from every member and implementation tools only from the Lead', async () => {
+    const { ctx, lead } = await setup(['hang'], false, {
+      denyTools: ['ordinary-delegation'],
+      denyLeadTools: ['implementation'],
+    })
+    const leadNames = (await assembly(ctx, lead)).tools.map(schema => schema.name)
+    expect(leadNames).not.toContain('ordinary-delegation')
+    expect(leadNames).not.toContain('implementation')
+
+    const spawned = await execute(ctx, lead, 'spawn_teammate', {
+      name: 'implementation-owner', description: 'perform implementation', prompt: 'stay available',
+    })
+    const child = await waitRunning(ctx, spawnedChildId(spawned))
+    const childNames = (await assembly(ctx, child)).tools.map(schema => schema.name)
+    expect(childNames).not.toContain('ordinary-delegation')
+    expect(childNames).toContain('implementation')
+    await execute(ctx, lead, 'interrupt_agent', { target: 'implementation-owner' })
   })
 
   it('returns actionable no-progress output and renders structured wait cancellation', async () => {
